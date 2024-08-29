@@ -14,7 +14,9 @@ ENV COMPANY_NAME=$COMPANY_NAME \
 RUN yum install sudo -y && \
     yum install shadow-utils -y && \
     amazon-linux-extras install epel -y && \
-    yum install procps-ng tar -y && \
+    yum install procps-ng tar wget -y && \
+    wget -O /usr/local/bin/dumb-init https://github.com/Yelp/dumb-init/releases/download/v1.2.5/dumb-init_1.2.5_x86_64 && \
+    chmod +x /usr/local/bin/dumb-init && \
     groupadd --system --gid 101 ds && \
     useradd --system -g ds --no-create-home --shell /sbin/nologin --uid 101 ds && \
     rm -f /var/log/*log
@@ -31,7 +33,7 @@ ENV TARGETARCH=$TARGETARCH
 WORKDIR /ds
 RUN useradd --no-create-home --shell /sbin/nologin nginx && \
     yum -y updateinfo && \
-    yum -y install cabextract fontconfig xorg-x11-font-utils xorg-x11-server-utils wget rpm2cpio && \
+    yum -y install cabextract fontconfig xorg-x11-font-utils xorg-x11-server-utils rpm2cpio && \
     rpm -i https://downloads.sourceforge.net/project/mscorefonts2/rpms/msttcore-fonts-installer-2.6-1.noarch.rpm && \
     PRODUCT_URL=$(echo $PRODUCT_URL | sed "s/"$TARGETARCH"/"$(uname -m)"/g") && \
     PACKAGE_NAME=$(basename "$PRODUCT_URL") && \
@@ -49,15 +51,13 @@ COPY --chown=ds:ds \
     config/nginx/includes/http-upstream.conf \
     /etc/$COMPANY_NAME/documentserver/nginx/includes/
 COPY --chown=ds:ds \
-    config/documentserver/default.json \
-    /etc/$COMPANY_NAME/documentserver/default.json
-COPY --chown=ds:ds \
     fonts/ \
     /var/www/$COMPANY_NAME/documentserver/core-fonts/custom/
 COPY --chown=ds:ds \
     plugins/ \
     /var/www/$COMPANY_NAME/documentserver/sdkjs-plugins/
 RUN documentserver-generate-allfonts.sh true && \
+    documentserver-flush-cache.sh false && \
     documentserver-pluginsmanager.sh -r false \
     --update=\"/var/www/$COMPANY_NAME/documentserver/sdkjs-plugins/plugin-list-default.json\"
 
@@ -81,6 +81,7 @@ COPY --chown=ds:ds --chmod=644 --from=ds-service \
     /etc/nginx/conf.d/
 COPY --chown=ds:ds --chmod=644 --from=ds-service \
     /etc/$COMPANY_NAME/documentserver*/nginx/includes/*.conf \
+    /etc/nginx/includes/ds-cache.conf \
     /etc/nginx/includes/
 COPY --chown=ds:ds --from=ds-service \
     /var/www/$COMPANY_NAME/documentserver/fonts \
@@ -174,7 +175,7 @@ COPY  --from=redis-lib \
     /usr/lib/python2.7/site-packages/redis-3.5.3.dist-info
 COPY docker-entrypoint.sh /usr/local/bin/
 USER ds
-ENTRYPOINT docker-entrypoint.sh /var/www/$COMPANY_NAME/documentserver/server/DocService/docservice
+ENTRYPOINT dumb-init docker-entrypoint.sh /var/www/$COMPANY_NAME/documentserver/server/DocService/docservice
 HEALTHCHECK --interval=10s --timeout=3s CMD curl -sf http://localhost:8000/index.html
 
 FROM ds-base AS converter
@@ -215,7 +216,7 @@ RUN mkdir -p \
         /var/lib/$COMPANY_NAME/documentserver/App_Data/docbuilder && \
     chown -R ds:ds /var/lib/$COMPANY_NAME/documentserver
 USER ds
-ENTRYPOINT docker-entrypoint.sh /var/www/$COMPANY_NAME/documentserver/server/FileConverter/converter
+ENTRYPOINT dumb-init docker-entrypoint.sh /var/www/$COMPANY_NAME/documentserver/server/FileConverter/converter
 
 FROM node:alpine3.19 AS example
 LABEL maintainer Ascensio System SIA <support@onlyoffice.com>
